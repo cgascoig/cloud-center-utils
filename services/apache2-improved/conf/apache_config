@@ -1,0 +1,73 @@
+#!/bin/bash
+
+if [ $os == "Ubuntu" ]
+then
+    if [ "$cliqrExternalHttpsEnabled" == 1 ]; then
+        cp $SVCHOME/etc/ports.conf.ssl /etc/$SVCNAME/ports.conf
+        chmod 0644 /etc/$SVCNAME/ports.conf
+    
+        cp $SVCHOME/etc/sites-available/default-ssl /etc/$SVCNAME/sites-available
+        chmod 0644 /etc/$SVCNAME/sites-available/default-ssl
+        if [ -n "$cliqrSSLCert" -a -n "$cliqrSSLKey" ]; then
+            replaceToken $VIRTUAL_HOST_CONFIG "%SSL_CERT%" $cliqrSSLCert
+            replaceToken $VIRTUAL_HOST_CONFIG "%SSL_KEY%" $cliqrSSLKey
+
+        else
+            replaceToken $VIRTUAL_HOST_CONFIG "%SSL_CERT%" "/usr/local/cliqr/etc/app.cliqr.com.crt"
+            replaceToken $VIRTUAL_HOST_CONFIG "%SSL_KEY%" "/usr/local/cliqr/app.cliqr.com.key"
+        fi
+        replaceToken $VIRTUAL_HOST_CONFIG "%SVCNAME%" "apache2"
+
+
+        /usr/sbin/a2ensite default-ssl
+        if [ $? -ne 0 ]; then
+            log "Error while enabling ssl"
+            exit $?
+        else
+            log "Successfully enabled ssl"
+            /usr/sbin/a2dissite 000-default
+            /usr/sbin/a2enmod ssl
+        fi
+        /etc/init.d/$SVCNAME restart
+    fi
+    
+elif ([ $os == "CentOS" ] || [ $os == "RHEL" ])
+then     
+    if [ "$cliqrExternalHttpsEnabled" == 1 ]; then
+        yum install -y mod_ssl
+        if [ $? -ne 0 ]
+        then
+            echo "Failed to install mod_ssl"
+        else
+            echo "mod_ssl installed"
+        fi
+
+        cp $SVCHOME/etc/ports.conf.ssl /etc/$SVCNAME/conf.d/ports.conf
+        chmod 0644 /etc/$SVCNAME/conf.d/ports.conf
+    
+        cp $SVCHOME/etc/sites-available/default-ssl /etc/$SVCNAME/sites-available
+        replaceToken /etc/$SVCNAME/sites-available/default-ssl "%SVCNAME%" $SVCNAME
+        chmod 0644 /etc/$SVCNAME/sites-available/default-ssl
+        
+        if [ -n "$cliqrSSLCert" -a -n "$cliqrSSLKey" ]; then
+            replaceToken $VIRTUAL_HOST_CONFIG "%SSL_CERT%" $cliqrSSLCert
+            replaceToken $VIRTUAL_HOST_CONFIG "%SSL_KEY%" $cliqrSSLKey
+
+        else
+            replaceToken $VIRTUAL_HOST_CONFIG "%SSL_CERT%" "/usr/local/osmosix/cert/vm.cliqr.com.crt"
+            replaceToken $VIRTUAL_HOST_CONFIG "%SSL_KEY%" "/usr/local/osmosix/cert/vm.cliqr.com.key"
+        fi
+        replaceToken $VIRTUAL_HOST_CONFIG "%SVCNAME%" "httpd"
+
+        /usr/sbin/a2ensite default-ssl
+        if [ $? -ne 0 ]; then
+            log "Error while enabling ssl"
+            exit 1
+        else
+            log "Successfully enabled ssl"
+            /usr/sbin/a2dissite default
+            /usr/sbin/a2enmod ssl
+        fi
+        /etc/init.d/$SVCNAME restart
+    fi
+fi

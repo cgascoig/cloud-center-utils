@@ -1,0 +1,27 @@
+#!/bin/bash
+
+available=/etc/httpd/sites-enabled/$1
+enabled=/etc/httpd/sites-enabled
+sites=`ls /etc/httpd/sites-enabled/`
+
+if [ "$#" != "1" ]; then
+    echo "Using script: a2dissite virtual_site"
+    echo -e "Input is incorrect.\nAvailable virtual hosts: \n$sites"
+    exit 1
+else
+    if test -e $available; then
+        rm  $available
+    else
+        echo -e "$available virtual host does not exist. No removal required."
+        exit 0
+    fi
+    
+    if test -e $enabled/$1; then
+        echo "Could not remove $available virtual host"
+        exit 1
+    else
+        echo  -e "$available removed successfully."
+    fi
+fi
+
+exit 0

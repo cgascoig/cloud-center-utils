@@ -1,0 +1,428 @@
+#!/bin/bash
+
+# Apache configurator
+exec > >(tee -a /usr/local/osmosix/logs/service.log) 2>&1
+
+OSSVC_HOME=/usr/local/osmosix/service
+
+. /usr/local/osmosix/etc/.osmosix.sh
+. /usr/local/osmosix/etc/userenv
+. $OSSVC_HOME/utils/cfgutil.sh
+. $OSSVC_HOME/utils/nosqlutil.sh
+. $OSSVC_HOME/utils/install_util.sh
+. $OSSVC_HOME/utils/os_info_util.sh
+. ./docker.sh
+    
+root_dir="$( cd "$( dirname $0 )" && pwd )"
+echo Root dir $root_dir
+
+cmd=$1
+SVCNAME=apache2
+BASE_APP_DIR=/usr/local/apps
+BASE_DEPLOY_DIR=/var/www
+APACHE_USER=www-data
+VIRTUAL_HOST_CONFIG=/etc/$SVCNAME/sites-available/default-ssl
+USER_ENV=/usr/local/osmosix/etc/userenv
+
+if ([ $os == "CentOS" ] || [ $os == "RHEL" ])
+then
+    SVCNAME=httpd
+    APACHE_USER=apache
+    VIRTUAL_HOST_CONFIG=/etc/$SVCNAME/sites-available/default-ssl
+fi
+installUnzip
+if [ $? -ne 0 ]
+then
+    log "[ERROR] Failed to install unzip"
+    exit 1
+fi
+
+# A map of os-name to installation-package
+ #["Ubuntu"]="2.2.*"
+# apache2Packages["Ubuntu"]="2.2.22-1ubuntu1.7"
+declare -A apache2Packages=(
+    ["Ubuntu"]="apache2"
+    ["CentOS"]="httpd"
+    ["RHEL"]="httpd"
+)
+if [ ! -z $CUSTOM_REPO_URL ]; then
+    apache2Packages["CentOS"]="httpd-2.2.15-39.el6.centos"
+    apache2Packages["RHEL"]="httpd-2.2.15-39.el6"
+    if ([[ $ver =~ [[:space:]]+7. ]])
+    then
+        apache2Packages["CentOS"]="httpd-2.4.6"
+        apache2Packages["RHEL"]="httpd-2.4.6"
+    fi
+fi
+
+installApache() {
+    log "[INSTALL] Starting $SVCNAME installation"
+    preInstall "package-update"
+
+    if ([ $os == "CentOS" ] || [ $os == "RHEL" ])
+    then
+        log "[INSTALL] OS: $os and version: $ver. Installing openssl-devel"
+	yum install -y openssl-devel
+    fi
+
+    install $SVCNAME "$(declare -p apache2Packages)"
+
+    . ${root_dir}/post_install
+    if [ $? -ne 0 ]
+    then
+            log "[ERROR] Failed to install $SVCNAME"
+            exit 1
+    fi
+    
+    return 0
+}
+
+generateApacheConfig() {
+
+	source "$USER_ENV"
+	if [ -z "$OSSVC_CONFIG" ]; then
+		log "[CONFIGURATION] Waiting for the userenv to be available.."
+		waitForPropertyInFile "$USER_ENV" "OSSVC_CONFIG"
+		source "$USER_ENV"
+	fi
+
+
+	overrideNosqlIp
+	deployDir=$BASE_DEPLOY_DIR/$cliqrWebappFolder
+	BACKUP_DIR=$SVCHOME/bkp
+	cd $deployDir
+
+	CFG_LIST=(`echo $cliqrPhpAppConfigFiles | tr ";" "\n"`)
+    CFG_VAR_NAME_LIST=(`echo $cliqrPhpAppConfigVarNames | tr ";" "\n"`)
+	for cfgFile in "${CFG_LIST[@]}"
+	do
+		log "[RESTORE-BACKUP] Restoring $BACKUP_DIR/$cfgFile "
+		cp $BACKUP_DIR/$cfgFile $cfgFile
+		replaceToken $cfgFile "%NOSQLDB_TIER_IP%" $CliqrTier_NoSQLDatabase_IP
+        replaceToken $cfgFile "%DB_TIER_IP%" $CliqrTier_Database_IP
+        replaceToken $cfgFile "%MB_TIER_IP%" $CliqrTier_MsgBus_IP
+        replaceToken $cfgFile "%BC_TIER_IP%" $CliqrTier_BackendCache_IP
+        replaceTierIpToken $cfgFile
+
+        for varName in "${CFG_VAR_NAME_LIST[@]}"
+        do
+            replaceToken $cfgFile "%${varName}%" "${!varName}"
+        done
+	done
+
+    log "[CONFIGURATION] Starting Apache configuration"
+    . ${root_dir}/conf/apache_config
+    if [ $? -ne 0 ]
+    then
+        log "[CONFIGURATION] Failed to configure $SVCNAME"
+        exit 1
+    else
+        log "[CONFIGURATION] $SVCNAME configuration was successful"
+    fi
+}
+
+deployWebapp() {
+	log "[DEPLOY] Deploying webapp $cliqrAppFile..."
+	if [ ! -d $BASE_DEPLOY_DIR ]; then
+		mkdir -p $BASE_DEPLOY_DIR
+	fi
+
+	appFileName=`basename $cliqrAppFile`
+	rm -rf $BASE_DEPLOY_DIR/*
+
+	#trim trailing / leading spaces
+	cliqrWebappFolder=`echo $cliqrWebappFolder | sed 's/ *$//g'`
+	deployDir=$BASE_DEPLOY_DIR/$cliqrWebappFolder
+	if [ ! -d $deployDir ]; then
+		mkdir -p $deployDir
+	fi
+
+	cp $cliqrAppFile $deployDir
+	cd $deployDir
+
+	unzip -o -q $appFileName
+	rm  $deployDir/$appFileName
+	#appRoot=$deployDir/`ls $deployDir`
+	#CliqrTier_DB_IP_NAME=CliqrTier_${CliqrDependencies}_IP
+	    
+	overrideNosqlIp
+	cd $deployDir
+	BACKUP_DIR=$SVCHOME/bkp/
+    mkdir -p $BACKUP_DIR
+	
+	CFG_LIST=(`echo $cliqrPhpAppConfigFiles | tr ";" "\n"`)
+	for cfgFile in "${CFG_LIST[@]}"
+	do        
+		echo "[BACKUP] backing up $deployDir/$cfgFile to $BACKUP_DIR"
+		dirName=`dirname $cfgFile`
+		mkdir -p $BACKUP_DIR/$dirName
+		cp $deployDir/$cfgFile $BACKUP_DIR/$dirName
+	done
+
+	if ! useDocker; then
+	    if [ $BASE_DEPLOY_DIR == $deployDir ]; then
+		    chown -R $APACHE_USER $deployDir/*
+		    chgrp -R $APACHE_USER $deployDir/*
+	    else
+		    chown -R $APACHE_USER $deployDir
+		    chgrp -R $APACHE_USER $deployDir
+	    fi
+	fi
+}
+
+cleanUp() {
+	rm -rf $BASE_DEPLOY_DIR/*
+}
+
+startApacheService() {
+	if ([ $os == "CentOS" ] || [ $os == "RHEL" ])
+	then
+		service $SVCNAME start
+	else
+		/etc/init.d/$SVCNAME start
+	fi
+}
+
+stopApacheService() {
+	if ([ $os == "CentOS" ] || [ $os == "RHEL" ])
+	then
+		service $SVCNAME stop
+	else
+		/etc/init.d/$SVCNAME stop
+	fi
+}
+
+restartApacheService() {
+	if ([ $os == "CentOS" ] || [ $os == "RHEL" ])
+	then
+		service $SVCNAME restart
+	else
+		/etc/init.d/$SVCNAME restart
+	fi
+}
+
+log() {
+	if [ -n "$USE_SERVICE_LOG"  -a "$USE_SERVICE_LOG" == "true" ];then
+	    echo "$*"
+	else
+		logger -t "OSMOSIX" "[$SVCNAME] $*"
+	fi
+}
+
+# main entry
+if [ -z "$OSSVC_HOME" ]; then
+	log "[ERROR] missing parameter, exit now"
+	exit 127
+fi
+
+SVCHOME="$OSSVC_HOME/apache2"
+
+runDocker(){
+    case $cmd in
+        install)
+            log "[INSTALL] Installing $SVCNAME "
+            installDockerApache
+            ;;
+        deploy)
+            log "[DEPLOY] Deploying webapp"
+            deployWebapp
+            ;;
+        configure)
+            log "[CONFIGURE] Generating $SVCHOME configuration"
+            generateDockerApacheConfig
+            ;;
+        start)
+            if [ ! -z "$cliqrUserScript" -a -f "$cliqrUserScript" ]; then
+                $cliqrUserScript 1 $cliqrUserScriptParams
+            fi
+
+            log "[START] Starting $SVCNAME"
+            startDockerApacheService
+
+            log "[START] Invoking post-start user script"
+            if [ ! -z $cliqrUserScript -a -f $cliqrUserScript ]; then
+                $cliqrUserScript 2 $cliqrUserScriptParams
+            fi
+
+            if [ "$appMigrating" = "true" ]; then
+                runMigrationRestoreScript
+            fi
+            log "[START] $SVCNAME successfully started"
+            ;;
+        stop)
+            log "[STOP] Invoking pre-stop user script"
+            if [ ! -z $cliqrUserScript -a -f $cliqrUserScript ]; then
+                $cliqrUserScript 3 $cliqrUserScriptParams
+            fi
+
+            log "[STOP] Stopping $SVCNAME"
+            stopDockerApacheService
+
+            log "[STOP] Invoking post-stop user script"
+            if [ ! -z $cliqrUserScript -a -f $cliqrUserScript ]; then
+                $cliqrUserScript 4 $cliqrUserScriptParams
+            fi
+            ;;
+        restart)
+
+            log "[RESTART] Invoking pre-restart user script"
+            if [ ! -z $cliqrUserScript -a -f $cliqrUserScript ]; then
+                $cliqrUserScript 5 $cliqrUserScriptParams
+            fi
+
+            log "[RESTART] Restarting $SVCNAME"
+            restartDockerApacheService
+
+            log "[RESTART] Invoking post-restart user script"
+            if [ ! -z $cliqrUserScript -a -f $cliqrUserScript ]; then
+                $cliqrUserScript 6 $cliqrUserScriptParams
+            fi
+
+            log "[RESTART] $SVCNAME successfully restarted"
+            ;;
+        cleanup)
+            log "[CLEANUP] Cleaning up $SVCNAME"
+            cleanUp
+            log "[CLEANUP] $SVCNAME successfully cleaned."
+            ;;
+        reload)
+            log "[RELOAD] Reloading $SVCNAME"
+
+            log "[RESTART] Invoking pre-restart user script"
+            if [ ! -z $cliqrUserScript -a -f $cliqrUserScript ]; then
+                $cliqrUserScript 5 $cliqrUserScriptParams
+            fi
+
+            log "[RESTART] Restarting $SVCNAME"
+            restartDockerApacheService
+
+            log "[RESTART] Invoking post-restart user script"
+            if [ ! -z $cliqrUserScript -a -f $cliqrUserScript ]; then
+                $cliqrUserScript 6 $cliqrUserScriptParams
+            fi
+            ;;
+        upgrade)
+            log "[UPGRADE] Upgrading $SVCNAME"
+            deployWebapp
+            log "[UPGRADE] Generating $SVCHOME configuration"
+            generateDockerApacheConfig
+            restartDockerApacheService
+            log "[UPGRADE] $SVCNAME successfully upgraded"
+            ;;
+        *)
+            log "[ERROR] unknown command"
+            exit 127
+            ;;
+    esac
+}
+
+runScripts(){
+    case $cmd in
+        install)
+            log "[INSTALL] Installing $SVCNAME "
+            installApache
+            ;;
+        deploy)
+            log "[DEPLOY] Deploying webapp"
+            deployWebapp
+            ;;
+        configure)
+            log "[CONFIGURE] Generating $SVCHOME configuration"
+            generateApacheConfig
+            ;;
+        start)
+            log "[START] Mounting storage volumes"
+                 mountSharedStorages
+            log "[START] Invoking pre-start user script"
+            if [ ! -z "$cliqrUserScript" -a -f "$cliqrUserScript" ]; then
+                $cliqrUserScript 1 $cliqrUserScriptParams
+            fi
+
+            log "[START] Starting $SVCNAME"
+            startApacheService
+
+            log "[START] Invoking post-start user script"
+            if [ ! -z $cliqrUserScript -a -f $cliqrUserScript ]; then
+                $cliqrUserScript 2 $cliqrUserScriptParams
+            fi
+
+            if [ "$appMigrating" = "true" ]; then
+                runMigrationRestoreScript
+            fi
+            log "[START] $SVCNAME successfully started"
+            ;;
+        stop)
+            log "[STOP] Invoking pre-stop user script"
+            if [ ! -z $cliqrUserScript -a -f $cliqrUserScript ]; then
+                $cliqrUserScript 3 $cliqrUserScriptParams
+            fi
+
+            log "[STOP] Stopping $SVCNAME"
+            stopApacheService
+
+            log "[STOP] Invoking post-stop user script"
+            if [ ! -z $cliqrUserScript -a -f $cliqrUserScript ]; then
+                $cliqrUserScript 4 $cliqrUserScriptParams
+            fi
+            ;;
+        restart)
+
+            log "[RESTART] Invoking pre-restart user script"
+            if [ ! -z $cliqrUserScript -a -f $cliqrUserScript ]; then
+                $cliqrUserScript 5 $cliqrUserScriptParams
+            fi
+
+            log "[RESTART] Restarting $SVCNAME"
+            restartApacheService
+
+            log "[RESTART] Invoking post-restart user script"
+            if [ ! -z $cliqrUserScript -a -f $cliqrUserScript ]; then
+                $cliqrUserScript 6 $cliqrUserScriptParams
+            fi
+
+            log "[RESTART] $SVCNAME successfully restarted"
+            ;;
+        cleanup)
+            log "[CLEANUP] Cleaning up $SVCNAME"
+            cleanUp
+            log "[CLEANUP] $SVCNAME successfully cleaned."
+            ;;
+        reload)
+            log "[RELOAD] Reloading $SVCNAME"
+
+            log "[RESTART] Invoking pre-restart user script"
+            if [ ! -z $cliqrUserScript -a -f $cliqrUserScript ]; then
+                $cliqrUserScript 5 $cliqrUserScriptParams
+            fi
+
+            log "[RESTART] Restarting $SVCNAME"
+            restartApacheService
+
+            log "[RESTART] Invoking post-restart user script"
+            if [ ! -z $cliqrUserScript -a -f $cliqrUserScript ]; then
+                $cliqrUserScript 6 $cliqrUserScriptParams
+            fi
+            ;;
+        upgrade)
+            log "[UPGRADE] Upgrading $SVCNAME"
+            deployWebapp
+            log "[UPGRADE] Generating $SVCHOME configuration"
+            generateApacheConfig
+
+            log "[UPGRADE] $SVCNAME successfully upgraded"
+            ;;
+        *)
+            log "[ERROR] unknown command"
+            exit 127
+            ;;
+    esac
+}
+
+
+# main entry
+if  useDocker ; then
+    runDocker
+else
+    runScripts
+fi
+

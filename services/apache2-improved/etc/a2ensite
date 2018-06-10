@@ -1,0 +1,26 @@
+#!/bin/bash
+
+available=/etc/httpd/sites-available/$1
+enabled=/etc/httpd/sites-enabled/
+sites=`ls /etc/httpd/sites-available/`
+
+if [ "$#" != "1" ]; then
+    echo "Using script: a2ensite virtual_site"
+    echo -e "Input is incorrect.\nAvailable virtual hosts:\n$sites"
+    exit 1
+else
+    if test -e $available; then
+        ln -s $available $enabled
+    else
+        echo -e "$available virtual host does not exist. Please create one.\n$sites"
+        exit 1
+    fi
+    if test -e $enabled/$1; then
+        echo "a2ensite was successful"
+    else
+        echo  -e "Virtual host $available does not exist.\nPlease see available virtual hosts:\n$sites"
+        exit 1
+    fi
+fi
+
+exit 0
