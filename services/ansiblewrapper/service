@@ -1,0 +1,120 @@
+#!/bin/bash
+
+# Ansible wrapper
+# Parameters expected from Cloud Center:
+# - GIT_URL
+# - GIT_BRANCH
+# - PLAYBOOK_FILENAME
+
+
+
+exec > >(tee -a /usr/local/osmosix/logs/service.log) 2>&1
+
+OSSVC_HOME=/usr/local/osmosix/service
+
+. /usr/local/osmosix/etc/.osmosix.sh
+. /usr/local/osmosix/etc/userenv
+# . $OSSVC_HOME/utils/cfgutil.sh
+# . $OSSVC_HOME/utils/nosqlutil.sh
+# . $OSSVC_HOME/utils/install_util.sh
+# . $OSSVC_HOME/utils/os_info_util.sh
+# . ./docker.sh
+
+SVCNAME="ansible-wrapper"
+BASE_DIR="/tmp/anisble-wrapper"
+GIT_DIR="${BASE_DIR}/git"
+
+if [[ -z "${GIT_BRANCH}" ]]
+then
+    GIT_BRANCH="master"
+fi
+
+installPrerequisites() {
+    apt-get install ansible git
+}
+
+runAnsible() {
+    PHASE=$1
+    UPDATE=$2
+
+    if [[ -z "${PHASE}" ]]
+    then
+        echo "runAnsible called without phase specified"
+        exit 1
+    fi
+
+    if [[ ! -d "${GIT_DIR}" ]]
+    then
+        (
+            mkdir -p "${GIT_DIR}"
+            cd "${GIT_DIR}"
+            git clone "${GIT_URL}" .
+            git checkout "${GIT_BRANCH}"
+        )
+    fi
+
+    if [[ ! -z "${UPDATE}" ]]
+    then
+        echo "updating ansible files via git"
+        (
+            cd "${GIT_DIR}"
+            git pull
+        )
+    fi
+
+    echo "running ansible"
+    (
+        cd "${GIT_DIR}"
+        echo "localhost" > "${BASE_DIR}/inventory"
+        ansible-playbook -i "${BASE_DIR}/inventory" --tags="${PHASE}" "${PLAYBOOK_FILENAME}"
+    )
+}
+
+runScripts(){
+    case $cmd in
+        install)
+            log "[INSTALL] ${SVCNAME}"
+            installAnsible
+            runAnsible install
+            ;;
+        deploy)
+            log "[DEPLOY] ${SVCNAME}"
+            runAnsible deploy 
+            ;;
+        configure)
+            log "[CONFIGURE] ${SVCNAME}"
+            runAnsible configure true
+            ;;
+        start)
+            log "[START] ${SVCNAME}"
+            runAnsible start
+            ;;
+        stop)
+            log "[STOP] ${SVCNAME}"
+            runAnsible stop
+            ;;
+        restart)
+            log "[RESTART] ${SVCNAME}"
+            runAnsible restart
+            ;;
+        cleanup)
+            log "[CLEANUP] ${SVCNAME}"
+            runAnsible cleanup
+            ;;
+        reload)
+            log "[RELOAD] ${SVCNAME}"
+            runAnsible reload
+            ;;
+        upgrade)
+            log "[UPGRADE] Upgrading $SVCNAME"
+            runAnsible upgrade
+            ;;
+        *)
+            log "[ERROR] unknown command"
+            exit 127
+            ;;
+    esac
+}
+
+
+runScripts
