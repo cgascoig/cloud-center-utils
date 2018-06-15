@@ -14,10 +14,10 @@ OSSVC_HOME=/usr/local/osmosix/service
 
 . /usr/local/osmosix/etc/.osmosix.sh
 . /usr/local/osmosix/etc/userenv
-# . $OSSVC_HOME/utils/cfgutil.sh
-# . $OSSVC_HOME/utils/nosqlutil.sh
-# . $OSSVC_HOME/utils/install_util.sh
-# . $OSSVC_HOME/utils/os_info_util.sh
+. $OSSVC_HOME/utils/cfgutil.sh
+. $OSSVC_HOME/utils/nosqlutil.sh
+. $OSSVC_HOME/utils/install_util.sh
+. $OSSVC_HOME/utils/os_info_util.sh
 # . ./docker.sh
 
 SVCNAME="ansible-wrapper"
