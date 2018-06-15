@@ -5,3 +5,5 @@
       package:
         name: apache2
         state: present
+      tags:
+        - deploy
