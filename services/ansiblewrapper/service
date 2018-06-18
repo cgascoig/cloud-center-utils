@@ -53,7 +53,7 @@ runAnsible() {
         exit 1
     fi
 
-    if [[ ! -d "${GIT_DIR}" ]]
+    if [[ ! -d "${GIT_DIR}" && ! -z "${GIT_URL}" && ! -z "${GIT_BRANCH}" ]]
     then
         (
             mkdir -p "${GIT_DIR}"
@@ -61,6 +61,8 @@ runAnsible() {
             git clone "${GIT_URL}" .
             git checkout "${GIT_BRANCH}"
         )
+    else
+        echo "Not cloning repository - GIT_DIR already exists or GIT_URL/GIT_BRANCH are not set. "
     fi
 
     if [[ ! -z "${UPDATE}" ]]
