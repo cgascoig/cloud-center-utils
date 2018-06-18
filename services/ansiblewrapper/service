@@ -20,6 +20,7 @@ OSSVC_HOME=/usr/local/osmosix/service
 # . $OSSVC_HOME/utils/os_info_util.sh
 # . ./docker.sh
 
+cmd=$1
 SVCNAME="ansible-wrapper"
 BASE_DIR="/tmp/anisble-wrapper"
 GIT_DIR="${BASE_DIR}/git"
@@ -38,7 +39,7 @@ log() {
 }
 
 installPrerequisites() {
-    apt-get install ansible git
+    apt-get install -y ansible git
 }
 
 runAnsible() {
@@ -70,19 +71,24 @@ runAnsible() {
         )
     fi
 
-    echo "running ansible"
-    (
-        cd "${GIT_DIR}"
-        echo "localhost" > "${BASE_DIR}/inventory"
-        ansible-playbook -i "${BASE_DIR}/inventory" --tags="${PHASE}" "${PLAYBOOK_FILENAME}"
-    )
+    if [[ -z "${PLAYBOOK_FILENAME}" ]]
+    then
+        echo "PLAYBOOK FILENAME not defined yet, skipping ansible"
+    else
+        echo "running ansible"
+        (
+            cd "${GIT_DIR}"
+            echo "localhost" > "${BASE_DIR}/inventory"
+            ansible-playbook -i "${BASE_DIR}/inventory" --tags="${PHASE}" "${PLAYBOOK_FILENAME}"
+        )
+    fi
 }
 
 runScripts(){
     case $cmd in
         install)
             log "[INSTALL] ${SVCNAME}"
-            installAnsible
+            installPrerequisites
             runAnsible install
             ;;
         deploy)
