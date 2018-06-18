@@ -1,9 +1,21 @@
 ---
-- hosts: localhost
+- name: Deploy Tasks
+  hosts: localhost
+  tags:
+    - deploy
   tasks:
-    - name: test
+    - name: Install web server
       package:
         name: apache2
         state: present
-      tags:
-        - deploy
+
+
+- name: Configure Tasks
+  hosts: localhost
+  tags: 
+    - configure
+  tasks:
+    - name: Setup web page
+      template:
+        src: index.html.j2
+        dest: /var/www/index.html
