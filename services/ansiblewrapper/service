@@ -9,6 +9,7 @@
 
 
 exec > >(tee -a /usr/local/osmosix/logs/service.log) 2>&1
+set -x
 
 OSSVC_HOME=/usr/local/osmosix/service
 
@@ -78,8 +79,7 @@ runAnsible() {
         echo "running ansible"
         (
             cd "${GIT_DIR}"
-            echo "localhost" > "${BASE_DIR}/inventory"
-            ansible-playbook -i "${BASE_DIR}/inventory" --tags="${PHASE}" "${PLAYBOOK_FILENAME}"
+            ansible-playbook --connection=local -i 127.0.0.1 --tags="${PHASE}" "${PLAYBOOK_FILENAME}"
         )
     fi
 }
