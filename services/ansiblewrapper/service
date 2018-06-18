@@ -22,7 +22,7 @@ OSSVC_HOME=/usr/local/osmosix/service
 
 cmd=$1
 SVCNAME="ansible-wrapper"
-BASE_DIR="/tmp/anisble-wrapper"
+BASE_DIR="/tmp/ansible-wrapper"
 GIT_DIR="${BASE_DIR}/git"
 
 if [[ -z "${GIT_BRANCH}" ]]
