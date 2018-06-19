@@ -80,7 +80,10 @@ runAnsible() {
         echo "running ansible"
         (
             cd "${GIT_DIR}"
-            ansible-playbook --connection=local -i 127.0.0.1 --tags="${PHASE}" "${PLAYBOOK_FILENAME}"
+            # convert the CloudCenter environment variables into a YAML file for Ansible
+            sed -e 's/=/: /' -e 's/^export //' /usr/local/cliqr/etc/userenv > /tmp/userenv.yaml
+            
+            ansible-playbook --connection=local -i 127.0.0.1 --extra-vars="@/tmp/userenv.yaml" --tags="${PHASE}" "${PLAYBOOK_FILENAME}"
         )
     fi
 }
